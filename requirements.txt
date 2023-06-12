@@ -1,0 +1,10 @@
+beautifulsoup4==4.12.2
+fastapi==0.95.2
+uvicorn==0.22.0
+pydantic==1.10.8
+asyncio==3.4.3
+httpx==0.24.1
+pytest-playwright==0.3.3
+# playwright install
+# sudo playwright install-deps
+# sudo apt-get install libgtk-3-0 libcairo-gobject2 libdbus-glib-1-2
