@@ -31,7 +31,7 @@ class DataRequest(BaseModel):
     userAgent: str
 
 
-@app.post("/asyncplayhttpx")
+@app.post("/playwrighthttpx")
 def index(data: DataRequest):
     try:
         headers = {"User-Agent": data.userAgent}
