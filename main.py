@@ -125,7 +125,7 @@ def scrape(keyword, page):
                 if link:
                     soup_produk.append(product)
         print(f"Berhasil scrape data dari halaman {page}.")
-        await page.close()
+        page.close()
         return soup_produk
     except Exception as e:
         print(f"Terjadi kesalahan saat mengakses halaman {url}: {str(e)}")
