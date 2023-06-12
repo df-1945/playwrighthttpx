@@ -6,10 +6,7 @@ import asyncio
 import httpx
 import time
 from playwright.async_api import async_playwright
-from typing import Generator
 from pathlib import Path
-from playwright.sync_api import Playwright, BrowserContext
-import pytest
 
 app = FastAPI()
 
