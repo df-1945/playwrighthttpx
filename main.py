@@ -48,30 +48,21 @@ def index(data: DataRequest):
 
 async def main(headers, keyword, pages):
     product_soup = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-        futures = [
-            executor.submit(scrape, keyword, page) for page in range(1, pages + 1)
+    async with async_playwright() as playwright:
+        browser = await playwright.firefox.launch(headless=True)
+        context = await browser.new_context()
+        loop = asyncio.get_event_loop()
+        tasks = [
+            loop.create_task(
+                scrape(
+                    f"https://www.tokopedia.com/search?q={keyword}&page={page}", context
+                )
+            )
+            for page in range(1, pages + 1)
         ]
-        for future in concurrent.futures.as_completed(futures):
-            soup_produk = future.result()
-            if soup_produk:
-                product_soup.extend(soup_produk)
-    # async with async_playwright() as playwright:
-    #     browser = await playwright.firefox.launch(headless=True)
-    #     context = await browser.new_context()
-        
-    #     loop = asyncio.get_event_loop()
-    #     tasks = [
-    #         loop.create_task(
-    #             scrape(
-    #                 f"https://www.tokopedia.com/search?q={keyword}&page={page}", context
-    #             )
-    #         )
-    #         for page in range(1, pages + 1)
-    #     ]
-    #     for task in asyncio.as_completed(tasks):
-    #         page_product_soup = await task
-    #         product_soup.extend(page_product_soup)
+        for task in asyncio.as_completed(tasks):
+            page_product_soup = await task
+            product_soup.extend(page_product_soup)
         # await browser.close()
     async with httpx.AsyncClient() as session:
         chunk_size = int(len(product_soup) / 5)
@@ -98,20 +89,17 @@ async def main(headers, keyword, pages):
     return combined_data
 
 
-def scrape(keyword, page):
+async def scrape(url, context):
     soup_produk = []
     try:
-        with async_playwright() as playwright:
-            browser = playwright.firefox.launch(headless=True)
-            context = browser.new_context()
-            page = context.new_page()
-            print("Membuka halaman...")
-            page.goto(f"https://www.tokopedia.com/search?q={keyword}&page={page}", timeout=1800000)
-            print("Menunggu reload...")
-            page.wait_for_load_state("networkidle", timeout=1800000)
-            # page.wait_for_selector(".css-jza1fo", timeout=1800000)
-            scroll(page, 1000)
-            content = page.content()
+        page = await context.new_page()
+        print("Membuka halaman...")
+        await page.goto(url, timeout=1800000)
+        print("Menunggu reload...")
+        await page.wait_for_load_state("networkidle", timeout=1800000)
+        # await page.wait_for_selector(".css-jza1fo", timeout=1800000)
+        await scroll(page, 1000)
+        content = await page.content()
         soup = BeautifulSoup(content, "html.parser")
         product_selectors = [
             ("div", {"class": "css-kkkpmy"}),
@@ -125,19 +113,19 @@ def scrape(keyword, page):
                 if link:
                     soup_produk.append(product)
         print(f"Berhasil scrape data dari halaman {page}.")
-        page.close()
+        # await page.close()
         return soup_produk
     except Exception as e:
         print(f"Terjadi kesalahan saat mengakses halaman {url}: {str(e)}")
 
 
-def scroll(page, scroll_amount):
+async def scroll(page, scroll_amount):
     try:
-        prev_height = page.evaluate("document.documentElement.scrollTop")
+        prev_height = await page.evaluate("document.documentElement.scrollTop")
         while True:
-            page.wait_for_selector(".css-974ipl", timeout=1800000)
-            page.evaluate(f"window.scrollBy(0, {scroll_amount});")
-            curr_height = page.evaluate("document.documentElement.scrollTop")
+            await page.wait_for_selector(".css-974ipl", timeout=1800000)
+            await page.evaluate(f"window.scrollBy(0, {scroll_amount});")
+            curr_height = await page.evaluate("document.documentElement.scrollTop")
             if prev_height == curr_height:
                 break
             prev_height = curr_height
