@@ -98,7 +98,7 @@ async def main(headers, keyword, pages):
     return combined_data
 
 
-def scrape(keyword, page):
+async def scrape(keyword, page):
     soup_produk = []
     try:
         async with async_playwright() as playwright:
@@ -131,7 +131,7 @@ def scrape(keyword, page):
         print(f"Terjadi kesalahan saat mengakses halaman {url}: {str(e)}")
 
 
-def scroll(page, scroll_amount):
+async def scroll(page, scroll_amount):
     try:
         prev_height = await page.evaluate("document.documentElement.scrollTop")
         while True:
