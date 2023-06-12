@@ -48,20 +48,18 @@ def index(data: DataRequest):
 
 async def main(headers, keyword, pages):
     product_soup = []
-    async with async_playwright() as playwright:
-        
-        loop = asyncio.get_event_loop()
-        tasks = [
-            loop.create_task(
-                scrape(
-                    f"https://www.tokopedia.com/search?q={keyword}&page={page}", playwright
-                )
+    loop = asyncio.get_event_loop()
+    tasks = [
+        loop.create_task(
+            scrape(
+                f"https://www.tokopedia.com/search?q={keyword}&page={page}"
             )
-            for page in range(1, pages + 1)
-        ]
-        for task in asyncio.as_completed(tasks):
-            page_product_soup = await task
-            product_soup.extend(page_product_soup)
+        )
+        for page in range(1, pages + 1)
+    ]
+    for task in asyncio.as_completed(tasks):
+        page_product_soup = await task
+        product_soup.extend(page_product_soup)
     
         # with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         #     futures = [
@@ -98,19 +96,20 @@ async def main(headers, keyword, pages):
     return combined_data
 
 
-async def scrape(url, playwright):
+async def scrape(url):
     soup_produk = []
     try:
-        browser = await playwright.firefox.launch(headless=True)
-        context = await browser.new_context()
-        page = await context.new_page()
-        print("Membuka halaman...")
-        await page.goto(url, timeout=1800000)
-        print("Menunggu reload...")
-        await page.wait_for_load_state("networkidle", timeout=1800000)
-        # await page.wait_for_selector(".css-jza1fo", timeout=1800000)
-        await scroll(page, 1000)
-        content = await page.content()
+        async with async_playwright() as playwright:
+            browser = await playwright.firefox.launch(headless=True)
+            context = await browser.new_context()
+            page = await context.new_page()
+            print("Membuka halaman...")
+            await page.goto(url, timeout=1800000)
+            print("Menunggu reload...")
+            await page.wait_for_load_state("networkidle", timeout=1800000)
+            # await page.wait_for_selector(".css-jza1fo", timeout=1800000)
+            await scroll(page, 1000)
+            content = await page.content()
         soup = BeautifulSoup(content, "html.parser")
         product_selectors = [
             ("div", {"class": "css-kkkpmy"}),
