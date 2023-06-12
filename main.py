@@ -49,7 +49,7 @@ def index(data: DataRequest):
 async def main(headers, keyword, pages):
     product_soup = []
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=False)
+        browser = await playwright.chromium.launch()
         context = await browser.new_context()
         
         loop = asyncio.get_event_loop()
