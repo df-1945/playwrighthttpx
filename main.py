@@ -48,21 +48,31 @@ def index(data: DataRequest):
 
 async def main(headers, keyword, pages):
     product_soup = []
-    async with async_playwright() as playwright:
-        browser = await playwright.firefox.launch(headless=True)
-        context = await browser.new_context()
-        loop = asyncio.get_event_loop()
-        tasks = [
-            loop.create_task(
-                scrape(
-                    f"https://www.tokopedia.com/search?q={keyword}&page={page}", context
-                )
-            )
-            for page in range(1, pages + 1)
+    # async with async_playwright() as playwright:
+    #     browser = await playwright.firefox.launch(headless=True)
+    #     context = await browser.new_context()
+    #     loop = asyncio.get_event_loop()
+    #     tasks = [
+    #         loop.create_task(
+    #             scrape(
+    #                 f"https://www.tokopedia.com/search?q={keyword}&page={page}", context
+    #             )
+    #         )
+    #         for page in range(1, pages + 1)
+    #     ]
+    #     for task in asyncio.as_completed(tasks):
+    #         page_product_soup = await task
+    #         product_soup.extend(page_product_soup)
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [
+            executor.submit(scrape, keyword, page) for page in range(1, pages + 1)
         ]
-        for task in asyncio.as_completed(tasks):
-            page_product_soup = await task
-            product_soup.extend(page_product_soup)
+        for future in concurrent.futures.as_completed(futures):
+            soup_produk = future.result()
+            if soup_produk:
+                product_soup.extend(soup_produk)
+
 #         await browser.close()
     async with httpx.AsyncClient() as session:
         chunk_size = int(len(product_soup) / 5)
@@ -89,17 +99,20 @@ async def main(headers, keyword, pages):
     return combined_data
 
 
-async def scrape(url, context):
+async def scrape(keyword, page):
     soup_produk = []
     try:
-        page = await context.new_page()
-        print("Membuka halaman...")
-        await page.goto(url, timeout=1800000)
-        print("Menunggu reload...")
-        await page.wait_for_load_state("networkidle", timeout=1800000)
-        # await page.wait_for_selector(".css-jza1fo", timeout=1800000)
-        await scroll(page, 1000)
-        content = await page.content()
+        async with async_playwright() as playwright:
+            browser = await playwright.firefox.launch(headless=True)
+            context = await browser.new_context()
+            page = await context.new_page()
+            print("Membuka halaman...")
+            await page.goto(f"https://www.tokopedia.com/search?q={keyword}&page={page}", timeout=1800000)
+            print("Menunggu reload...")
+            await page.wait_for_load_state("networkidle", timeout=1800000)
+            # await page.wait_for_selector(".css-jza1fo", timeout=1800000)
+            await scroll(page, 1000)
+            content = await page.content()
         soup = BeautifulSoup(content, "html.parser")
         product_selectors = [
             ("div", {"class": "css-kkkpmy"}),
