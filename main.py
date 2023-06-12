@@ -48,17 +48,14 @@ def index(data: DataRequest):
 
 async def main(headers, keyword, pages):
     product_soup = []
-    async with async_playwright() as playwright:
-            browser = await playwright.firefox.launch(headless=True)
-            context = await browser.new_context()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
-            futures = [
-                executor.submit(scrape, keyword, page, context) for page in range(1, pages + 1)
-            ]
-            for future in concurrent.futures.as_completed(futures):
-                soup_produk = future.result()
-                if soup_produk:
-                    product_soup.extend(soup_produk)
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [
+            executor.submit(scrape, keyword, page) for page in range(1, pages + 1)
+        ]
+        for future in concurrent.futures.as_completed(futures):
+            soup_produk = future.result()
+            if soup_produk:
+                product_soup.extend(soup_produk)
     # async with async_playwright() as playwright:
     #     browser = await playwright.firefox.launch(headless=True)
     #     context = await browser.new_context()
@@ -101,17 +98,20 @@ async def main(headers, keyword, pages):
     return combined_data
 
 
-async def scrape(keyword, pagee, context):
+def scrape(keyword, page):
     soup_produk = []
     try:
-        page = await context.new_page()
-        print("Membuka halaman...")
-        await page.goto(f"https://www.tokopedia.com/search?q={keyword}&page={pagee}", timeout=1800000)
-        print("Menunggu reload...")
-        await page.wait_for_load_state("networkidle", timeout=1800000)
-        # await page.wait_for_selector(".css-jza1fo", timeout=1800000)
-        await scroll(page, 1000)
-        content = await page.content()
+        with async_playwright() as playwright:
+            browser = playwright.firefox.launch(headless=True)
+            context = browser.new_context()
+            page = context.new_page()
+            print("Membuka halaman...")
+            page.goto(f"https://www.tokopedia.com/search?q={keyword}&page={page}", timeout=1800000)
+            print("Menunggu reload...")
+            page.wait_for_load_state("networkidle", timeout=1800000)
+            # page.wait_for_selector(".css-jza1fo", timeout=1800000)
+            scroll(page, 1000)
+            content = page.content()
         soup = BeautifulSoup(content, "html.parser")
         product_selectors = [
             ("div", {"class": "css-kkkpmy"}),
@@ -131,13 +131,13 @@ async def scrape(keyword, pagee, context):
         print(f"Terjadi kesalahan saat mengakses halaman {url}: {str(e)}")
 
 
-async def scroll(page, scroll_amount):
+def scroll(page, scroll_amount):
     try:
-        prev_height = await page.evaluate("document.documentElement.scrollTop")
+        prev_height = page.evaluate("document.documentElement.scrollTop")
         while True:
-            await page.wait_for_selector(".css-974ipl", timeout=1800000)
-            await page.evaluate(f"window.scrollBy(0, {scroll_amount});")
-            curr_height = await page.evaluate("document.documentElement.scrollTop")
+            page.wait_for_selector(".css-974ipl", timeout=1800000)
+            page.evaluate(f"window.scrollBy(0, {scroll_amount});")
+            curr_height = page.evaluate("document.documentElement.scrollTop")
             if prev_height == curr_height:
                 break
             prev_height = curr_height
