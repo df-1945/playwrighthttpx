@@ -6,6 +6,10 @@ import asyncio
 import httpx
 import time
 from playwright.async_api import async_playwright
+from typing import Generator
+from pathlib import Path
+from playwright.sync_api import Playwright, BrowserContext
+import pytest
 
 app = FastAPI()
 
@@ -31,7 +35,7 @@ class DataRequest(BaseModel):
     userAgent: str
 
 
-@app.post("/playwrighthttpx")
+@app.post("/asyncplayhttpx")
 def index(data: DataRequest):
     try:
         headers = {"User-Agent": data.userAgent}
@@ -49,8 +53,18 @@ def index(data: DataRequest):
 async def main(headers, keyword, pages):
     product_soup = []
     async with async_playwright() as playwright:
-        browser = await playwright.firefox.launch(headless=True)
-        context = await browser.new_context()
+        # browser = await playwright.chromium.launch(headless=True)
+        # context = await browser.new_context()
+        path_to_extension = Path(__file__).parent.joinpath("my-extension")
+        context = await playwright.chromium.launch_persistent_context(
+            "",
+            headless=False,
+            args=[
+                "--headless=new",  # the new headless arg for chrome v109+. Use '--headless=chrome' as arg for browsers v94-108.
+                f"--disable-extensions-except={path_to_extension}",
+                f"--load-extension={path_to_extension}",
+            ],
+        )
         loop = asyncio.get_event_loop()
         tasks = [
             loop.create_task(
