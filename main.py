@@ -49,12 +49,12 @@ def index(data: DataRequest):
 async def main(headers, keyword, pages):
     product_soup = []
     async with async_playwright() as playwright:
-        browser = await playwright.firefox.launch(headless=True)
+        
         loop = asyncio.get_event_loop()
         tasks = [
             loop.create_task(
                 scrape(
-                    f"https://www.tokopedia.com/search?q={keyword}&page={page}", browser
+                    f"https://www.tokopedia.com/search?q={keyword}&page={page}", playwright
                 )
             )
             for page in range(1, pages + 1)
@@ -98,9 +98,10 @@ async def main(headers, keyword, pages):
     return combined_data
 
 
-async def scrape(url, browser):
+async def scrape(url, playwright):
     soup_produk = []
     try:
+        browser = await playwright.firefox.launch(headless=True)
         context = await browser.new_context()
         page = await context.new_page()
         print("Membuka halaman...")
