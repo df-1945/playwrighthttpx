@@ -50,7 +50,7 @@ async def main(headers, keyword, pages):
     product_soup = []
     async with async_playwright() as playwright:
         browser = await playwright.firefox.launch(headless=True)
-    #     context = await browser.new_context()
+        context = await browser.new_context()
     #     loop = asyncio.get_event_loop()
     #     tasks = [
     #         loop.create_task(
@@ -66,7 +66,7 @@ async def main(headers, keyword, pages):
     
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = [
-                executor.submit(scrape, keyword, page, browser) for page in range(1, pages + 1)
+                executor.submit(scrape, keyword, page, context) for page in range(1, pages + 1)
             ]
             for future in concurrent.futures.as_completed(futures):
                 soup_produk = future.result()
@@ -99,10 +99,9 @@ async def main(headers, keyword, pages):
     return combined_data
 
 
-async def scrape(keyword, page, browser):
+async def scrape(keyword, page, context):
     soup_produk = []
     try:
-        context = await browser.new_context()
         page = await context.new_page()
         print("Membuka halaman...")
         await page.goto(f"https://www.tokopedia.com/search?q={keyword}&page={page}", timeout=1800000)
