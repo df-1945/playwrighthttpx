@@ -54,7 +54,7 @@ async def main(headers, keyword, pages):
         loop = asyncio.get_event_loop()
         tasks = [
             loop.create_task(
-                await scrape(
+                scrape(
                     f"https://www.tokopedia.com/search?q={keyword}&page={page}", context
                 )
             )
