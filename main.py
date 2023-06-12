@@ -49,7 +49,7 @@ def index(data: DataRequest):
 async def main(headers, keyword, pages):
     product_soup = []
     async with async_playwright() as playwright:
-        browser = await playwright.chromium.launch(headless=True)
+        browser = await playwright.firefox.launch(headless=True)
         context = await browser.new_context()
         loop = asyncio.get_event_loop()
         tasks = [
@@ -63,7 +63,7 @@ async def main(headers, keyword, pages):
         for task in asyncio.as_completed(tasks):
             page_product_soup = await task
             product_soup.extend(page_product_soup)
-        await browser.close()
+#         await browser.close()
     async with httpx.AsyncClient() as session:
         chunk_size = int(len(product_soup) / 5)
         product_soup_chunks = [[] for _ in range(chunk_size)]
