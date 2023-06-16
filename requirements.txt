@@ -7,6 +7,7 @@ httpx==0.24.1
 pytest-playwright==0.3.3
 psutil==5.9.5
 typing_extensions==4.6.3
+py-cpuinfo==9.0.0
 # playwright install
 # sudo playwright install-deps
 # sudo apt-get install libgtk-3-0 libcairo-gobject2 libdbus-glib-1-2
