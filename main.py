@@ -45,11 +45,11 @@ class Hasil(BaseModel):
     download: str
     time: float
     cpu_type: Optional[str] = None
-    cpu_threads_max: Optional[int] = None
+    cpu_threads: Optional[int] = None
     cpu_frequency_max: Optional[float] = None
     cpu_max_percent: Optional[List] = None
     ram_total: Optional[str] = None
-    ram_min_available: Optional[str] = None
+    ram_available: Optional[str] = None
     ram_max_percent: Optional[float] = None
     jumlah: int
     hasil: Optional[List[Dict]] = None
@@ -452,24 +452,24 @@ def ambil_data(input: DataRequest):
             cpu_info = cpuinfo.get_cpu_info()
             cpu_type = cpu_info["brand_raw"]
             print("Tipe CPU:", cpu_type)
+            cpu_threads = psutil.cpu_count(logical=True)
+            print("thread cpu", cpu_threads)
 
             ram = psutil.virtual_memory()
             ram_total = ram.total  # Total RAM dalam bytes
             print("Total RAM:", ram_total)
+            ram_available = ram.available  # RAM yang tersedia dalam bytes
+            print("RAM Tersedia:", ram_available)
 
             cpu_percent_max = []  # Highest CPU usage during execution
             cpu_frequency_max = 0  # Highest frekuensi CPU usage during execution
-            cpu_threads_max = 0  # Highest thread CPU usage during execution
             ram_percent_max = 0  # Highest RAM usage during execution
-            ram_available_min = 0  # Highest RAM usage during execution
 
             interval = 0.1  # Interval for monitoring (seconds)
             duration = data["time"]
             num_intervals = int(duration / interval) + 1
 
             for _ in range(num_intervals):
-                cpu_threads = psutil.cpu_count(logical=True)
-                print("thread cpu", cpu_threads)
                 cpu_frequency = psutil.cpu_freq().current
                 print("frekuensi cpu", cpu_frequency)
                 cpu_percent = psutil.cpu_percent(interval=interval, percpu=True)
@@ -477,11 +477,6 @@ def ambil_data(input: DataRequest):
                 # Informasi RAM
                 ram_percent = psutil.virtual_memory().percent
                 print("ram", ram_percent)
-                ram_available = ram.available  # RAM yang tersedia dalam bytes
-                print("RAM Tersedia:", ram_available)
-
-                if cpu_threads > cpu_threads_max:
-                    cpu_threads_max = cpu_threads
 
                 if cpu_frequency > cpu_frequency_max:
                     cpu_frequency_max = cpu_frequency
@@ -492,16 +487,13 @@ def ambil_data(input: DataRequest):
                 if ram_percent > ram_percent_max:
                     ram_percent_max = ram_percent
 
-                if ram_available < ram_available_min:
-                    ram_available_min = ram_available
-
             data["cpu_type"] = cpu_type
-            data["cpu_threads_max"] = cpu_threads_max
+            data["cpu_threads"] = cpu_threads
             data["cpu_frequency_max"] = cpu_frequency_max
             data["cpu_max_percent"] = cpu_percent_max
             data["ram_total"] = format_bytes(ram_total)
             data["ram_max_percent"] = ram_percent_max
-            data["ram_min_available"] = format_bytes(ram_available_min)
+            data["ram_available"] = format_bytes(ram_available)
             data["status"] = "lama"
 
     return data_playwrighthttpx
