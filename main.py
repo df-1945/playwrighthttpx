@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from bs4 import BeautifulSoup
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, validator
 import asyncio
 import httpx
 import time
@@ -11,10 +11,12 @@ from enum import Enum
 import psutil
 from typing import List, Dict, Optional
 import cpuinfo
+import multiprocessing
 
 app = FastAPI()
 
 origins = [
+    "http://localhost:3000",
     "https://kikisan.pages.dev",
     "https://kikisan.site",
     "https://www.kikisan.site",
@@ -29,75 +31,110 @@ app.add_middleware(
 )
 
 
-class Status(str, Enum):
+class Metode(str, Enum):
     def __str__(self):
         return str(self.value)
 
-    BARU = "baru"
-    LAMA = "lama"
+    METODE = "playwrighthttpx"
 
 
 class Hasil(BaseModel):
     keyword: str
     pages: int
-    status: Status
-    upload: str
-    download: str
+    metode: Metode
+    upload: List[int]
+    download: List[int]
+    internet: List[int]
+    cpu_list: List[float]
+    ram_list: List[float]
     time: float
     cpu_type: Optional[str] = None
     cpu_threads: Optional[int] = None
-    cpu_frequency_max: Optional[float] = None
-    cpu_max_percent: Optional[List] = None
+    # cpu_frequency_max: Optional[float] = None
+    # cpu_max_percent: Optional[List] = None
     ram_total: Optional[str] = None
     ram_available: Optional[str] = None
-    ram_max_percent: Optional[float] = None
-    jumlah: int
+    # ram_max_percent: Optional[float] = None
+    jumlah_data: int
     hasil: Optional[List[Dict]] = None
 
 
 class DataRequest(BaseModel):
     keyword: str
-    pages: int
+    pages: int = Field(..., gt=0)
+    metode: Metode
+
+    @validator("keyword")
+    def validate_keyword(cls, keyword):
+        if not keyword.strip():
+            raise ValueError("Keyword tidak boleh kosong atau hanya berisi spasi")
+        return keyword
 
 
-data_playwrighthttpx = []
+# data_playwrighthttpx = []
 
 
 @app.post("/playwrighthttpx")
 def input_playwrighthttpx(request: Request, input: DataRequest):
     try:
-        sent_bytes_start, received_bytes_start = get_network_usage()
-
         headers = {"User-Agent": request.headers.get("User-Agent")}
+
+        manager = multiprocessing.Manager()
+        cpu_list = manager.list()  # List untuk menyimpan data pemantauan CPU
+        ram_list = manager.list()  # List untuk menyimpan data pemantauan RAM
+        upload_list = (
+            manager.list()
+        )  # List untuk menyimpan data pemantauan Internet Upload
+        download_list = (
+            manager.list()
+        )  # List untuk menyimpan data pemantauan Internet Download
+        internet_list = manager.list()  # List untuk menyimpan data pemantauan Internet
+
+        monitor_process = multiprocessing.Process(
+            target=monitoring,
+            args=(cpu_list, ram_list, upload_list, download_list, internet_list),
+        )
+        monitor_process.start()
 
         start_time = time.time()
         hasil = asyncio.run(main(headers, input.keyword, input.pages))
         end_time = time.time()
 
-        sent_bytes_end, received_bytes_end = get_network_usage()
+        monitor_process.terminate()
 
-        sent_bytes_total = sent_bytes_end - sent_bytes_start
-        received_bytes_total = received_bytes_end - received_bytes_start
+        internet_upload = list(upload_list)
+        internet_download = list(download_list)
+        internet = list(internet_list)
 
-        print("Total Penggunaan Internet:")
-        print("Upload:", format_bytes(sent_bytes_total))
-        print("Download:", format_bytes(received_bytes_total))
+        cpu_info = cpuinfo.get_cpu_info()
+        cpu_type = cpu_info["brand_raw"]
+        cpu_threads = psutil.cpu_count(logical=True)
+        cpu_list_data = list(cpu_list)
 
-        print(
-            f"Berhasil mengambil {len(hasil)} produk dalam {end_time - start_time} detik."
-        )
+        ram = psutil.virtual_memory()
+        ram_total = format_bytes(ram.total)  # Total RAM dalam bytes
+        ram_available = format_bytes(ram.available)  # RAM yang tersedia dalam bytes
+        ram_list_data = list(ram_list)
+
         data = {
             "keyword": input.keyword,
             "pages": input.pages,
-            "status": "baru",
-            "upload": format_bytes(sent_bytes_total),
-            "download": format_bytes(received_bytes_total),
+            "metode": input.metode,
+            "upload": internet_upload,
+            "download": internet_download,
+            "internet": internet,
             "time": end_time - start_time,
-            "jumlah": len(hasil),
+            "cpu_list": cpu_list_data,
+            "ram_list": ram_list_data,
+            "cpu_type": cpu_type,
+            "cpu_threads": cpu_threads,
+            "ram_total": ram_total,
+            "ram_available": ram_available,
+            "jumlah_data": len(hasil),
             "hasil": hasil,
         }
-        data_playwrighthttpx.append(data)
-        return data_playwrighthttpx
+        # data_playwrighthttpx.append(data)
+        return data
     except Exception as e:
         return e
 
@@ -402,12 +439,53 @@ async def data_shop(shop_link, headers, session):
         return None
 
 
-def get_network_usage():
-    network_stats = psutil.net_io_counters()
-    sent_bytes = network_stats.bytes_sent
-    received_bytes = network_stats.bytes_recv
+def monitoring(cpu_list, ram_list, upload_list, download_list, internet_list):
+    # Memperoleh penggunaan internet
+    last_total, last_sent, last_received = get_network_usage()
+    while True:  # Loop utama untuk monitoring
+        # Memperoleh penggunaan CPU
+        cpu_usage = get_cpu_usage()
+        print("Penggunaan CPU:", cpu_usage, "%")
+        cpu_list.append(cpu_usage)
 
-    return sent_bytes, received_bytes
+        # Memperoleh penggunaan RAM
+        ram_usage = get_ram_usage()
+        print("Penggunaan RAM:", ram_usage, "%")
+        ram_list.append(ram_usage)
+
+        # Memperoleh penggunaan internet
+        bytes_total, bytes_sent, bytes_received = get_network_usage()
+
+        # Menghitung penggunaan internet
+        upload = bytes_sent - last_sent
+        download = bytes_received - last_received
+        internet = bytes_total - last_total
+
+        print("Penggunaan Internet ~ Upload:", format_bytes(upload))
+        print("Penggunaan Internet ~ Download:", format_bytes(download))
+        print("Penggunaan Internet:", format_bytes(internet))
+        upload_list.append(upload)
+        download_list.append(download)
+        internet_list.append(internet)
+
+
+# Fungsi untuk memperoleh penggunaan CPU
+def get_cpu_usage():
+    return psutil.cpu_percent(interval=1, percpu=True)
+
+
+# Fungsi untuk memperoleh penggunaan RAM
+def get_ram_usage():
+    ram = psutil.virtual_memory()
+    return ram.percent
+
+
+# Fungsi untuk memperoleh penggunaan Internet
+def get_network_usage():
+    received = psutil.net_io_counters().bytes_recv
+    sent = psutil.net_io_counters().bytes_sent
+    total = received + sent
+    return total, sent, received
 
 
 def format_bytes(bytes):
@@ -420,80 +498,80 @@ def format_bytes(bytes):
     return "{:.2f} {}".format(bytes, sizes[i])
 
 
-@app.get("/data")
-def ambil_data(
-    keyword: Optional[str] = None,
-    pages: Optional[int] = None,
-    status: Optional[Status] = None,
-):
-    if status is not None or keyword is not None or pages is not None:
-        result_filter = []
-        for data in data_playwrighthttpx:
-            data = Hasil.parse_obj(data)
-            if (
-                status == data.status
-                and data.keyword == keyword
-                and data.pages == pages
-            ):
-                result_filter.append(data)
-    else:
-        result_filter = data_playwrighthttpx
-    return result_filter
+# @app.get("/data")
+# def ambil_data(
+#     keyword: Optional[str] = None,
+#     pages: Optional[int] = None,
+#     status: Optional[Status] = None,
+# ):
+#     if status is not None or keyword is not None or pages is not None:
+#         result_filter = []
+#         for data in data_playwrighthttpx:
+#             data = Hasil.parse_obj(data)
+#             if (
+#                 status == data.status
+#                 and data.keyword == keyword
+#                 and data.pages == pages
+#             ):
+#                 result_filter.append(data)
+#     else:
+#         result_filter = data_playwrighthttpx
+#     return result_filter
 
 
-@app.put("/monitoring")
-def ambil_data(input: DataRequest):
-    for data in data_playwrighthttpx:
-        if (
-            data["status"] == "baru"
-            and data["keyword"] == input.keyword
-            and data["pages"] == input.pages
-        ):
-            cpu_info = cpuinfo.get_cpu_info()
-            cpu_type = cpu_info["brand_raw"]
-            print("Tipe CPU:", cpu_type)
-            cpu_threads = psutil.cpu_count(logical=True)
-            print("thread cpu", cpu_threads)
+# @app.put("/monitoring")
+# def ambil_data(input: DataRequest):
+#     for data in data_playwrighthttpx:
+#         if (
+#             data["status"] == "baru"
+#             and data["keyword"] == input.keyword
+#             and data["pages"] == input.pages
+#         ):
+#             cpu_info = cpuinfo.get_cpu_info()
+#             cpu_type = cpu_info["brand_raw"]
+#             print("Tipe CPU:", cpu_type)
+#             cpu_threads = psutil.cpu_count(logical=True)
+#             print("thread cpu", cpu_threads)
 
-            ram = psutil.virtual_memory()
-            ram_total = ram.total  # Total RAM dalam bytes
-            print("Total RAM:", ram_total)
-            ram_available = ram.available  # RAM yang tersedia dalam bytes
-            print("RAM Tersedia:", ram_available)
+#             ram = psutil.virtual_memory()
+#             ram_total = ram.total  # Total RAM dalam bytes
+#             print("Total RAM:", ram_total)
+#             ram_available = ram.available  # RAM yang tersedia dalam bytes
+#             print("RAM Tersedia:", ram_available)
 
-            cpu_percent_max = []  # Highest CPU usage during execution
-            cpu_frequency_max = 0  # Highest frekuensi CPU usage during execution
-            ram_percent_max = 0  # Highest RAM usage during execution
+#             cpu_percent_max = []  # Highest CPU usage during execution
+#             cpu_frequency_max = 0  # Highest frekuensi CPU usage during execution
+#             ram_percent_max = 0  # Highest RAM usage during execution
 
-            interval = 0.1  # Interval for monitoring (seconds)
-            duration = data["time"]
-            num_intervals = int(duration / interval) + 1
+#             interval = 0.1  # Interval for monitoring (seconds)
+#             duration = data["time"]
+#             num_intervals = int(duration / interval) + 1
 
-            for _ in range(num_intervals):
-                cpu_frequency = psutil.cpu_freq().current
-                print("frekuensi cpu", cpu_frequency)
-                cpu_percent = psutil.cpu_percent(interval=interval, percpu=True)
-                print("cpu", cpu_percent)
-                # Informasi RAM
-                ram_percent = psutil.virtual_memory().percent
-                print("ram", ram_percent)
+#             for _ in range(num_intervals):
+#                 cpu_frequency = psutil.cpu_freq().current
+#                 print("frekuensi cpu", cpu_frequency)
+#                 cpu_percent = psutil.cpu_percent(interval=interval, percpu=True)
+#                 print("cpu", cpu_percent)
+#                 # Informasi RAM
+#                 ram_percent = psutil.virtual_memory().percent
+#                 print("ram", ram_percent)
 
-                if cpu_frequency > cpu_frequency_max:
-                    cpu_frequency_max = cpu_frequency
+#                 if cpu_frequency > cpu_frequency_max:
+#                     cpu_frequency_max = cpu_frequency
 
-                if cpu_percent > cpu_percent_max:
-                    cpu_percent_max = cpu_percent
+#                 if cpu_percent > cpu_percent_max:
+#                     cpu_percent_max = cpu_percent
 
-                if ram_percent > ram_percent_max:
-                    ram_percent_max = ram_percent
+#                 if ram_percent > ram_percent_max:
+#                     ram_percent_max = ram_percent
 
-            data["cpu_type"] = cpu_type
-            data["cpu_threads"] = cpu_threads
-            data["cpu_frequency_max"] = cpu_frequency_max
-            data["cpu_max_percent"] = cpu_percent_max
-            data["ram_total"] = format_bytes(ram_total)
-            data["ram_max_percent"] = ram_percent_max
-            data["ram_available"] = format_bytes(ram_available)
-            data["status"] = "lama"
+#             data["cpu_type"] = cpu_type
+#             data["cpu_threads"] = cpu_threads
+#             data["cpu_frequency_max"] = cpu_frequency_max
+#             data["cpu_max_percent"] = cpu_percent_max
+#             data["ram_total"] = format_bytes(ram_total)
+#             data["ram_max_percent"] = ram_percent_max
+#             data["ram_available"] = format_bytes(ram_available)
+#             data["status"] = "lama"
 
-    return data_playwrighthttpx
+#     return data_playwrighthttpx
