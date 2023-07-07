@@ -9,9 +9,19 @@ from playwright.async_api import async_playwright
 from pathlib import Path
 from enum import Enum
 import psutil
-from typing import List, Dict, Optional
+
+# from typing import List, Dict, Optional
 import cpuinfo
 import multiprocessing
+
+import speedtest
+import subprocess
+import re
+import numpy as np
+import skfuzzy as fuzz
+from skfuzzy import control as ctrl
+from sklearn.metrics import precision_score, recall_score, f1_score
+import json
 
 app = FastAPI()
 
@@ -38,25 +48,25 @@ class Metode(str, Enum):
     METODE = "playwrighthttpx"
 
 
-class Hasil(BaseModel):
-    keyword: str
-    pages: int
-    metode: Metode
-    upload: List[int]
-    download: List[int]
-    internet: List[int]
-    cpu_list: List[float]
-    ram_list: List[float]
-    time: float
-    cpu_type: Optional[str] = None
-    cpu_threads: Optional[int] = None
-    # cpu_frequency_max: Optional[float] = None
-    # cpu_max_percent: Optional[List] = None
-    ram_total: Optional[str] = None
-    ram_available: Optional[str] = None
-    # ram_max_percent: Optional[float] = None
-    jumlah_data: int
-    hasil: Optional[List[Dict]] = None
+# class Hasil(BaseModel):
+#     keyword: str
+#     pages: int
+#     metode: Metode
+#     upload: List[int]
+#     download: List[int]
+#     internet: List[int]
+#     cpu_list: List[float]
+#     ram_list: List[float]
+#     time: float
+#     cpu_type: Optional[str] = None
+#     cpu_threads: Optional[int] = None
+#     # cpu_frequency_max: Optional[float] = None
+#     # cpu_max_percent: Optional[List] = None
+#     ram_total: Optional[str] = None
+#     ram_available: Optional[str] = None
+#     # ram_max_percent: Optional[float] = None
+#     jumlah_data: int
+#     hasil: Optional[List[Dict]] = None
 
 
 class DataRequest(BaseModel):
@@ -302,12 +312,21 @@ async def data_product(soup_produk, product_link, headers, session):
             }
 
             results = {}
+            product_items = {}
+            product_detail = {}
 
             for key, value in data_to_scrape.items():
                 if key == "product_detail":
                     tag, attrs = value
                     elements = soup.find_all(tag, attrs)
-                    results[key] = [element.text.strip() for element in elements]
+                    if elements:
+                        # results[key] = [element.text.strip() for element in elements]
+                        for element in elements:
+                            kunci = element.text.strip().split(":")[0]
+                            product_detail[kunci] = element.text.strip().split(": ")[1]
+                        results[key] = product_detail
+                    else:
+                        results[key] = None
                 elif key == "product_items":
                     tag, attrs = value
                     elements = soup.find_all(tag, attrs)
@@ -323,12 +342,13 @@ async def data_product(soup_produk, product_link, headers, session):
                                 .text.strip()
                                 .split(":")[0]
                             )
-                            results[kunci] = [
+                            product_items[kunci] = [
                                 item.text.strip()
                                 for item in items
                                 if item.text.strip()
                                 != ".css-1y1bj62{padding:4px 2px;display:-webkit-inline-box;display:-webkit-inline-flex;display:-ms-inline-flexbox;display:inline-flex;}"
                             ]
+                        results[key] = product_items
                     else:
                         results[key] = None
                 elif key == "link_product":
@@ -350,7 +370,7 @@ async def data_product(soup_produk, product_link, headers, session):
                     element = soup.find(tag, attrs)
                     if element:
                         text = element.get_text(
-                            separator="<br>"
+                            separator="\n"
                         )  # Gunakan separator '\n' untuk menambahkan baris baru
                         results[key] = text.strip()
                     else:
@@ -575,3 +595,501 @@ def format_bytes(bytes):
 #             data["status"] = "lama"
 
 #     return data_playwrighthttpx
+
+
+@app.get("/speed")
+def cek_kecepatan_internet():
+    try:
+        st = speedtest.Speedtest()
+        print("Mengukur kecepatan unduhan...")
+        download_speed = (
+            st.download() / 10**6
+        )  # Mengukur kecepatan unduhan dalam Megabit per detik
+        print("Kecepatan unduhan:", round(download_speed, 2), "Mbps")
+
+        print("Mengukur kecepatan unggahan...")
+        upload_speed = (
+            st.upload() / 10**6
+        )  # Mengukur kecepatan unggahan dalam Megabit per detik
+        print("Kecepatan unggahan:", round(upload_speed, 2), "Mbps")
+
+        # Pengecekan kestabilan koneksi
+        print("Memeriksa kestabilan koneksi...")
+        ping_packet_loss, ping_time_ms = get_ping()
+
+        print("Waktu rata-rata ping ke www.tokopedia.com : ", ping_time_ms)
+        if ping_packet_loss <= 1:
+            print(f"ping_packet_loss: {ping_packet_loss} ~ Koneksi Stabil")
+        else:
+            print(f"ping_packet_loss: {ping_packet_loss} ~ Koneksi Tidak Stabil")
+
+        # Penilaian jaringan berdasarkan metode Fuzzy Mamdani
+        hasil = penilaian_jaringan(
+            round(download_speed, 2),
+            round(upload_speed, 2),
+            ping_time_ms,
+            ping_packet_loss,
+        )
+        penilaian = get_kondisi_penilaian(hasil)
+        print(f"Penilaian mengunakan Metode Fuzzy Mamdani: {hasil} ~ {penilaian}")
+        # uji_keakuratan(download_speed, upload_speed, ping, packet_loss, hasil, penilaian)
+
+        data = {
+            "speed_download": round(download_speed, 2),
+            "speed_upload": round(upload_speed, 2),
+            "ping_time_ms": ping_time_ms,
+            "ping_packet_loss": ping_packet_loss,
+            "nilai_fuzzy": hasil,
+            "penilaian_fuzzy": penilaian,
+        }
+        return data
+
+    except (Exception, speedtest.SpeedtestException) as e:
+        print("Gagal melakukan pengujian kecepatan internet.", e)
+        return e
+
+
+def penilaian_jaringan(kecepatan_unduhan, kecepatan_unggahan, ping, packet_loss):
+    # Membuat variabel linguistik
+    kecepatan_unduhan_var = ctrl.Antecedent(np.arange(0, 101, 1), "kecepatan_unduhan")
+    kecepatan_unggahan_var = ctrl.Antecedent(np.arange(0, 101, 1), "kecepatan_unggahan")
+    ping_var = ctrl.Antecedent(np.arange(0, 101, 1), "ping")
+    packet_loss_var = ctrl.Antecedent(np.arange(0, 101, 1), "packet_loss")
+    penilaian = ctrl.Consequent(np.arange(0, 101, 1), "penilaian")
+
+    # Mendefinisikan fungsi keanggotaan
+    kecepatan_unduhan_var["lambat"] = fuzz.trimf(
+        kecepatan_unduhan_var.universe, [0, 10, 20]
+    )
+    kecepatan_unduhan_var["sedang"] = fuzz.trimf(
+        kecepatan_unduhan_var.universe, [15, 30, 50]
+    )
+    kecepatan_unduhan_var["cepat"] = fuzz.trimf(
+        kecepatan_unduhan_var.universe, [40, 60, 100]
+    )
+
+    kecepatan_unggahan_var["lambat"] = fuzz.trimf(
+        kecepatan_unggahan_var.universe, [0, 5, 15]
+    )
+    kecepatan_unggahan_var["sedang"] = fuzz.trimf(
+        kecepatan_unggahan_var.universe, [10, 25, 50]
+    )
+    kecepatan_unggahan_var["cepat"] = fuzz.trimf(
+        kecepatan_unggahan_var.universe, [35, 50, 100]
+    )
+
+    ping_var["cepat"] = fuzz.trimf(ping_var.universe, [0, 10, 30])
+    ping_var["sedang"] = fuzz.trimf(ping_var.universe, [25, 30, 55])
+    ping_var["lambat"] = fuzz.trimf(ping_var.universe, [50, 80, 100])
+
+    packet_loss_var["rendah"] = fuzz.trimf(packet_loss_var.universe, [0, 10, 20])
+    packet_loss_var["sedang"] = fuzz.trimf(packet_loss_var.universe, [10, 30, 50])
+    packet_loss_var["tinggi"] = fuzz.trimf(packet_loss_var.universe, [40, 75, 100])
+
+    penilaian["buruk"] = fuzz.trimf(penilaian.universe, [0, 10, 25])
+    penilaian["cukup"] = fuzz.trimf(penilaian.universe, [20, 30, 50])
+    penilaian["baik"] = fuzz.trimf(penilaian.universe, [40, 75, 100])
+
+    # Membuat aturan fuzzy
+    rule1 = ctrl.Rule(
+        kecepatan_unduhan_var["lambat"] & kecepatan_unggahan_var["lambat"],
+        penilaian["buruk"],
+    )
+    rule2 = ctrl.Rule(
+        kecepatan_unduhan_var["lambat"] & kecepatan_unggahan_var["sedang"],
+        penilaian["buruk"],
+    )
+    rule3 = ctrl.Rule(
+        kecepatan_unduhan_var["sedang"] & kecepatan_unggahan_var["lambat"],
+        penilaian["buruk"],
+    )
+    rule4 = ctrl.Rule(
+        kecepatan_unduhan_var["sedang"] & kecepatan_unggahan_var["sedang"],
+        penilaian["cukup"],
+    )
+    rule5 = ctrl.Rule(
+        kecepatan_unduhan_var["cepat"] & kecepatan_unggahan_var["cepat"],
+        penilaian["baik"],
+    )
+    rule6 = ctrl.Rule(
+        kecepatan_unduhan_var["cepat"] & kecepatan_unggahan_var["sedang"],
+        penilaian["baik"],
+    )
+    rule7 = ctrl.Rule(
+        kecepatan_unduhan_var["sedang"] & kecepatan_unggahan_var["cepat"],
+        penilaian["baik"],
+    )
+    rule8 = ctrl.Rule(
+        kecepatan_unduhan_var["cepat"] & kecepatan_unggahan_var["lambat"],
+        penilaian["cukup"],
+    )
+    rule9 = ctrl.Rule(
+        kecepatan_unduhan_var["lambat"] & kecepatan_unggahan_var["cepat"],
+        penilaian["cukup"],
+    )
+
+    rule10 = ctrl.Rule(
+        kecepatan_unduhan_var["lambat"] & ping_var["lambat"], penilaian["buruk"]
+    )
+    rule11 = ctrl.Rule(
+        kecepatan_unduhan_var["lambat"] & ping_var["sedang"], penilaian["buruk"]
+    )
+    rule12 = ctrl.Rule(
+        kecepatan_unduhan_var["sedang"] & ping_var["lambat"], penilaian["buruk"]
+    )
+    rule13 = ctrl.Rule(
+        kecepatan_unduhan_var["sedang"] & ping_var["sedang"], penilaian["cukup"]
+    )
+    rule14 = ctrl.Rule(
+        kecepatan_unduhan_var["cepat"] & ping_var["cepat"], penilaian["baik"]
+    )
+    rule15 = ctrl.Rule(
+        kecepatan_unduhan_var["cepat"] & ping_var["sedang"], penilaian["baik"]
+    )
+    rule16 = ctrl.Rule(
+        kecepatan_unduhan_var["sedang"] & ping_var["cepat"], penilaian["baik"]
+    )
+    rule17 = ctrl.Rule(
+        kecepatan_unduhan_var["cepat"] & ping_var["lambat"], penilaian["cukup"]
+    )
+    rule18 = ctrl.Rule(
+        kecepatan_unduhan_var["lambat"] & ping_var["cepat"], penilaian["buruk"]
+    )
+
+    rule19 = ctrl.Rule(
+        kecepatan_unduhan_var["lambat"] & packet_loss_var["tinggi"], penilaian["buruk"]
+    )
+    rule20 = ctrl.Rule(
+        kecepatan_unduhan_var["lambat"] & packet_loss_var["sedang"], penilaian["buruk"]
+    )
+    rule21 = ctrl.Rule(
+        kecepatan_unduhan_var["sedang"] & packet_loss_var["tinggi"], penilaian["cukup"]
+    )
+    rule22 = ctrl.Rule(
+        kecepatan_unduhan_var["sedang"] & packet_loss_var["sedang"], penilaian["cukup"]
+    )
+    rule23 = ctrl.Rule(
+        kecepatan_unduhan_var["cepat"] & packet_loss_var["rendah"], penilaian["baik"]
+    )
+    rule24 = ctrl.Rule(
+        kecepatan_unduhan_var["cepat"] & packet_loss_var["sedang"], penilaian["cukup"]
+    )
+    rule25 = ctrl.Rule(
+        kecepatan_unduhan_var["sedang"] & packet_loss_var["rendah"], penilaian["baik"]
+    )
+    rule26 = ctrl.Rule(
+        kecepatan_unduhan_var["cepat"] & packet_loss_var["tinggi"], penilaian["cukup"]
+    )
+    rule27 = ctrl.Rule(
+        kecepatan_unduhan_var["lambat"] & packet_loss_var["rendah"], penilaian["buruk"]
+    )
+
+    rule28 = ctrl.Rule(
+        kecepatan_unggahan_var["lambat"] & ping_var["lambat"], penilaian["buruk"]
+    )
+    rule29 = ctrl.Rule(
+        kecepatan_unggahan_var["lambat"] & ping_var["sedang"], penilaian["buruk"]
+    )
+    rule30 = ctrl.Rule(
+        kecepatan_unggahan_var["sedang"] & ping_var["lambat"], penilaian["cukup"]
+    )
+    rule31 = ctrl.Rule(
+        kecepatan_unggahan_var["sedang"] & ping_var["sedang"], penilaian["cukup"]
+    )
+    rule32 = ctrl.Rule(
+        kecepatan_unggahan_var["cepat"] & ping_var["cepat"], penilaian["baik"]
+    )
+    rule33 = ctrl.Rule(
+        kecepatan_unggahan_var["cepat"] & ping_var["sedang"], penilaian["cukup"]
+    )
+    rule34 = ctrl.Rule(
+        kecepatan_unggahan_var["sedang"] & ping_var["cepat"], penilaian["baik"]
+    )
+    rule35 = ctrl.Rule(
+        kecepatan_unggahan_var["cepat"] & ping_var["lambat"], penilaian["cukup"]
+    )
+    rule36 = ctrl.Rule(
+        kecepatan_unggahan_var["lambat"] & ping_var["cepat"], penilaian["buruk"]
+    )
+
+    rule37 = ctrl.Rule(
+        kecepatan_unggahan_var["lambat"] & packet_loss_var["tinggi"], penilaian["buruk"]
+    )
+    rule38 = ctrl.Rule(
+        kecepatan_unggahan_var["lambat"] & packet_loss_var["sedang"], penilaian["buruk"]
+    )
+    rule39 = ctrl.Rule(
+        kecepatan_unggahan_var["sedang"] & packet_loss_var["tinggi"], penilaian["cukup"]
+    )
+    rule40 = ctrl.Rule(
+        kecepatan_unggahan_var["sedang"] & packet_loss_var["sedang"], penilaian["cukup"]
+    )
+    rule41 = ctrl.Rule(
+        kecepatan_unggahan_var["cepat"] & packet_loss_var["rendah"], penilaian["baik"]
+    )
+    rule42 = ctrl.Rule(
+        kecepatan_unggahan_var["cepat"] & packet_loss_var["sedang"], penilaian["cukup"]
+    )
+    rule43 = ctrl.Rule(
+        kecepatan_unggahan_var["sedang"] & packet_loss_var["rendah"], penilaian["baik"]
+    )
+    rule44 = ctrl.Rule(
+        kecepatan_unggahan_var["cepat"] & packet_loss_var["tinggi"], penilaian["cukup"]
+    )
+    rule45 = ctrl.Rule(
+        kecepatan_unggahan_var["lambat"] & packet_loss_var["rendah"], penilaian["buruk"]
+    )
+
+    rule46 = ctrl.Rule(
+        ping_var["lambat"] & packet_loss_var["tinggi"], penilaian["buruk"]
+    )
+    rule47 = ctrl.Rule(
+        ping_var["lambat"] & packet_loss_var["sedang"], penilaian["buruk"]
+    )
+    rule48 = ctrl.Rule(
+        ping_var["sedang"] & packet_loss_var["tinggi"], penilaian["cukup"]
+    )
+    rule49 = ctrl.Rule(
+        ping_var["sedang"] & packet_loss_var["sedang"], penilaian["cukup"]
+    )
+    rule50 = ctrl.Rule(ping_var["cepat"] & packet_loss_var["rendah"], penilaian["baik"])
+    rule51 = ctrl.Rule(
+        ping_var["cepat"] & packet_loss_var["sedang"], penilaian["cukup"]
+    )
+    rule52 = ctrl.Rule(
+        ping_var["sedang"] & packet_loss_var["rendah"], penilaian["cukup"]
+    )
+    rule53 = ctrl.Rule(
+        ping_var["cepat"] & packet_loss_var["tinggi"], penilaian["buruk"]
+    )
+    rule54 = ctrl.Rule(
+        ping_var["lambat"] & packet_loss_var["rendah"], penilaian["buruk"]
+    )
+
+    # Membuat sistem kontrol
+    penilaian_ctrl = ctrl.ControlSystem(
+        [
+            rule1,
+            rule2,
+            rule3,
+            rule4,
+            rule5,
+            rule6,
+            rule7,
+            rule8,
+            rule9,
+            rule10,
+            rule11,
+            rule12,
+            rule13,
+            rule14,
+            rule15,
+            rule16,
+            rule17,
+            rule18,
+            rule19,
+            rule20,
+            rule21,
+            rule22,
+            rule23,
+            rule24,
+            rule25,
+            rule26,
+            rule27,
+            rule28,
+            rule29,
+            rule30,
+            rule31,
+            rule32,
+            rule33,
+            rule34,
+            rule35,
+            rule36,
+            rule37,
+            rule38,
+            rule39,
+            rule40,
+            rule41,
+            rule42,
+            rule43,
+            rule44,
+            rule45,
+            rule46,
+            rule47,
+            rule48,
+            rule49,
+            rule50,
+            rule51,
+            rule52,
+            rule53,
+            rule54,
+        ]
+    )
+    penilaian = ctrl.ControlSystemSimulation(penilaian_ctrl)
+
+    # Menetapkan input ke sistem kontrol fuzzy
+    penilaian.input["kecepatan_unduhan"] = kecepatan_unduhan
+    penilaian.input["kecepatan_unggahan"] = kecepatan_unggahan
+    penilaian.input["ping"] = ping
+    penilaian.input["packet_loss"] = packet_loss
+
+    # Melakukan proses inferensi fuzzy
+    penilaian.compute()
+
+    # Mengembalikan hasil penilaian
+    return penilaian.output["penilaian"]
+
+
+def get_kondisi_penilaian(penilaian):
+    if penilaian <= 25:
+        kondisi = "lambat"
+    elif penilaian > 25 and penilaian <= 50:
+        kondisi = "sedang"
+    else:
+        kondisi = "cepat"
+    return kondisi
+
+
+def get_ping():
+    try:
+        process = subprocess.Popen(
+            ["ping", "-c", "10", "www.tokopedia.com"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        output, error = process.communicate()
+        error_str = error.decode("utf-8")
+        output_str = output.decode("utf-8")
+        packet_loss = extract_packet_loss(output_str)
+        average_time = extract_average_time(output_str)
+
+        # Menampilkan proses pengecekan koneksi
+        print("\n=== Pengecekan Kestabilan Koneksi ===")
+        print(error_str)
+        print("----------------------------------------")
+        print(output_str)
+
+        return packet_loss, average_time
+    except subprocess.CalledProcessError:
+        return 100.0, 1000.0  # Jika terjadi kesalahan, asumsikan 100% packet loss
+
+
+def extract_packet_loss(output):
+    match = re.search(r"(\d+(\.\d+)?)% packet loss", output)
+    if match:
+        packet_loss = float(match.group(1))
+        return packet_loss
+
+
+def extract_average_time(output):
+    times = re.findall(r"time=([\d.]+) ms", output)
+    if times:
+        time = [float(time) for time in times]
+        average_time = sum(time) / len(time)
+        return average_time
+
+
+# def uji_keakuratan(kecepatan_unduhan, kecepatan_unggahan, ping, packet_loss, hasil_fuzzy, penilaian):
+@app.get("/uji")
+def uji_keakuratan():
+    try:
+        # Path file JSON
+        file_path = "./data_pengujian.json"
+
+        with open(file_path, "r") as json_file:
+            test_data = json.load(json_file)
+
+        total_data = len(test_data)
+        # benar = 0
+
+        hasil = []
+
+        y_true = []  # Target yang sebenarnya
+        y_pred = []  # Target yang diprediksi
+
+        for data in test_data:
+            target_kecepatan_unduhan = data["kecepatan_unduhan"]
+            target_kecepatan_unggahan = data["kecepatan_unggahan"]
+            target_ping_time_ms = data["ping_time_ms"]
+            target_ping_packet_loss = data["ping_packet_loss"]
+            # target_hasil = data["fuzzy"]
+            target_penilaian = data["penilaian"]
+
+            hasil_uji = penilaian_jaringan(
+                target_kecepatan_unduhan,
+                target_kecepatan_unggahan,
+                target_ping_time_ms,
+                target_ping_packet_loss,
+            )
+            penilaian_uji = get_kondisi_penilaian(hasil_uji)
+            # Mengambil keputusan berdasarkan hasil penilaian
+
+            # threshold = 1.0  # Set the threshold value for classification
+            # if target_hasil > hasil_uji:
+            #     hasil_uji = min(target_hasil, hasil_uji)
+            # if abs(hasil_uji - target_hasil) <= threshold:
+            #     benar += 1
+            #     print(
+            #         f"Area threshold: {benar}). data uji: {target_hasil} ~ hasil pengujian: {hasil_uji}"
+            #     )
+
+            # Menambahkan target sebenarnya dan target prediksi ke dalam list
+            y_true.append(target_penilaian)
+            y_pred.append(penilaian_uji)
+
+            # Menampilkan hasil pengujian
+            print("----------------------------------------")
+            print("Data Pengujian:")
+            print("Kecepatan Unduhan:", target_kecepatan_unduhan)
+            print("Kecepatan Unggahan:", target_kecepatan_unggahan)
+            print("ping time ms:", target_ping_time_ms)
+            print("Ping Packet Loss:", target_ping_packet_loss)
+            # print("Hasil_fuzzy:", target_hasil)
+            print("Penilaian:", target_penilaian)
+            print("----------------------------------------")
+            print("Hasil Pengujian fuzzy:", hasil_uji)
+            print("Penilaian Pengujian:", penilaian_uji)
+            print("----------------------------------------")
+            data_uji = {
+                "speed_download": target_kecepatan_unduhan,
+                "speed_upload": target_kecepatan_unggahan,
+                "ping_time_ms": target_ping_time_ms,
+                "ping_packet_loss": target_ping_packet_loss,
+                # "hasil": target_hasil,
+                "penilaian": target_penilaian,
+                "hasil_fuzzy": hasil_uji,
+                "penilaian_fuzzy": penilaian_uji,
+            }
+            hasil.append(data_uji)
+
+        # Menghitung keakuratan
+        print("Jumlah data uji: ", total_data)
+        # print("Selisih nilai yang di tolerir: ", threshold)
+        # keakuratan = benar / total_data * 100
+        # print(
+        #     "Keakuratan data uji dengan hasil Fuzzy Mamdani: {:.2f}%".format(keakuratan)
+        # )
+
+        # Menghitung precision, recall, dan F1-score
+        precision = precision_score(y_true, y_pred, average="weighted", zero_division=1)
+        recall = recall_score(y_true, y_pred, average="weighted", zero_division=1)
+        f1 = f1_score(y_true, y_pred, average="weighted", zero_division=1)
+
+        # Menampilkan hasil pengujian akurasi
+        print("Precision: {:.2f}".format(precision))
+        print("Recall: {:.2f}".format(recall))
+        print("F1-score: {:.2f}".format(f1))
+
+        data = {
+            "total_data": total_data,
+            # "threshold": threshold,
+            # "keakuratan": keakuratan,
+            "precision": precision,
+            "recall": recall,
+            "f1 score": f1,
+            "hasil": hasil,
+        }
+        return data
+    except Exception as e:
+        print(e)
+        return e
